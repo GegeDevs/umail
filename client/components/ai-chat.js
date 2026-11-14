@@ -271,6 +271,17 @@ function ensurePanel() {
   root.addEventListener('click', (event) => {
     if (event.target.closest('[data-ai-source]')) closePanel();
   });
+  // Keep the panel inside the visible area when the mobile keyboard opens.
+  const fitViewport = () => {
+    const vv = window.visualViewport;
+    if (!vv || root.classList.contains('hidden')) return;
+    root.style.height = `${vv.height}px`;
+    root.style.top = `${vv.offsetTop}px`;
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  };
+  root._fitViewport = fitViewport;
+  window.visualViewport?.addEventListener('resize', fitViewport);
+  window.visualViewport?.addEventListener('scroll', fitViewport);
   newButton.addEventListener('click', startNewSession);
   historyButton.addEventListener('click', () => {
     renderHistory();
@@ -307,8 +318,10 @@ function openPanel() {
   ensurePanel();
   if (!current) current = newSession();
   root.classList.remove('hidden');
+  root._fitViewport();
   renderMessages();
   inputEl.focus();
+  root._fitViewport();
 }
 
 function closePanel() {
