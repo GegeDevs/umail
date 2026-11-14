@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#2563eb">
+  <title>UMail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
+</head>
+<body class="h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+  <div id="app" class="flex flex-col h-screen overflow-hidden">
+    <header id="top-bar" class="h-12 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 px-3 shrink-0 bg-white dark:bg-gray-900 z-50">
+      <div class="flex items-center gap-2 min-w-0">
+        <button id="btn-toggle-sidebar" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Toggle sidebar" aria-label="Toggle sidebar">
+          <span class="material-icons-outlined text-xl">menu</span>
+        </button>
+        <a href="#/" class="flex items-center gap-2 shrink-0" title="UMail">
+          <span class="material-icons-outlined text-blue-600 text-2xl">mail</span>
+          <span class="font-bold text-lg tracking-tight hidden sm:inline">UMail</span>
+        </a>
+      </div>
+
+      <div id="global-search-wrap" class="hidden flex-1 min-w-0 max-w-xl items-center gap-2 px-3 py-1.5 rounded-full bg-gray-100 dark:bg-gray-800 mx-1 sm:mx-2">
+        <span class="material-icons-outlined text-gray-500 text-lg">search</span>
+        <input id="global-search" type="search" placeholder="Search mail" autocomplete="off"
+          class="bg-transparent outline-none text-sm w-full placeholder-gray-500 dark:placeholder-gray-400">
+      </div>
+
+      <div class="flex items-center gap-1 shrink-0">
+        <button id="btn-ai-chat" class="hidden btn-icon text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800" title="Ask your mail">
+          <span class="material-icons-outlined">forum</span>
+        </button>
+        <button id="btn-refresh" class="hidden btn-icon text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800" title="Refresh">
+          <span class="material-icons-outlined">refresh</span>
+        </button>
+        <button id="btn-toggle-theme" class="btn-icon text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800" title="Theme">
+          <span class="material-icons-outlined">brightness_auto</span>
+        </button>
+        <div id="user-menu-wrap" class="hidden relative">
+          <button id="btn-user-menu" class="flex items-center gap-1 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800" title="Account">
+            <span id="topbar-avatar" class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 flex items-center justify-center text-sm font-semibold">U</span>
+          </button>
+          <div id="user-menu" class="hidden absolute right-0 top-11 w-56 card shadow-xl p-1 z-50">
+            <div class="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
+              <div id="user-menu-name" class="text-sm font-semibold"></div>
+              <div id="user-menu-role" class="text-xs text-gray-500 dark:text-gray-400"></div>
+            </div>
+            <button data-menu="settings" class="context-menu-item w-full text-left rounded-lg">
+              <span class="material-icons-outlined text-lg">settings</span> Settings
+            </button>
+            <button data-menu="logout" class="context-menu-item w-full text-left rounded-lg text-red-600 dark:text-red-400">
+              <span class="material-icons-outlined text-lg">logout</span> Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden min-h-0">
+      <aside id="sidebar" class="hidden md:flex w-64 border-r border-gray-200 dark:border-gray-700 flex-col shrink-0 bg-white dark:bg-gray-900"></aside>
+      <main id="main-content" class="flex-1 overflow-y-auto min-w-0 bg-gray-50 dark:bg-gray-900"></main>
+    </div>
+
+    <nav id="mobile-nav" class="hidden md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex items-center overflow-x-auto h-14 scrollbar-hide"></nav>
+  </div>
+
+  <div id="toast-container" class="fixed bottom-16 md:bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+  <div id="modal-root"></div>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

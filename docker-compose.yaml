@@ -1,0 +1,25 @@
+services:
+  umail:
+    image: ghcr.io/gegedevs/umail:latest
+    build: .
+    container_name: umail
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - umail-db:/app/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  umail-db:
