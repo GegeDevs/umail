@@ -21,6 +21,11 @@ import { renderUsersPage } from './pages/users.js';
 import { renderActivityPage, renderLogsPage, renderApiAccessPage, renderApiDocsPage } from './pages/admin.js';
 
 initTheme();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((error) => console.warn('Service worker failed:', error.message));
+  });
+}
 
 async function boot() {
   let status;

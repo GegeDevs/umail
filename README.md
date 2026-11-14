@@ -36,6 +36,16 @@ docker compose up -d
 - Build lokal: `docker compose up -d --build`.
 - `.env` dibaca oleh container; jangan commit file itu.
 
+## Install sebagai aplikasi (PWA)
+
+UMail punya `manifest.webmanifest` + service worker, jadi bisa dipasang seperti aplikasi Chrome.
+
+- **Desktop Chrome/Edge:** buka UMail, klik ikon install di address bar (atau menu ⋮ → *Install UMail*).
+- **Android Chrome:** menu ⋮ → *Add to Home screen* / *Install app*.
+- **iOS Safari:** Share → *Add to Home Screen*.
+
+Butuh HTTPS (atau `localhost`). Aplikasi berjalan standalone tanpa address bar. Service worker hanya meng-cache shell UI; data email tetap dari server dan endpoint `/api/` tidak di-cache.
+
 ## Google OAuth
 
 1. Buka Google Cloud Console, buat project, aktifkan **Gmail API**.
