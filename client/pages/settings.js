@@ -150,7 +150,7 @@ export async function renderSettingsPage() {
           </button>
         </div>` : '<p class="text-xs text-amber-600 dark:text-amber-400">Read-only: you do not have settings:edit.</p>'}
       </form>
-      <section id="ai-rules-card" class="card p-5 mt-4 hidden">
+      <section id="ai-rules-card" class="card p-5 mt-4">
         <h2 class="panel-title mb-1">AI chat permissions</h2>
         <p class="muted mb-3">Actions the assistant may run without asking again.</p>
         <div id="ai-action-rules" class="flex flex-wrap gap-2"></div>
@@ -284,12 +284,11 @@ export async function renderSettingsPage() {
     const loadRules = async () => {
       try {
         const { results } = await api('/api/mail/ai/action-rules');
-        rulesCard.classList.toggle('hidden', !results.length);
-        rulesEl.innerHTML = results.map((action) => `
+        rulesEl.innerHTML = results.length ? results.map((action) => `
           <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-1 text-xs">
             ${escapeHtml(action)}
             <button type="button" data-rule-revoke="${escapeHtml(action)}" class="text-red-500" title="Revoke"><span class="material-icons-outlined text-sm">close</span></button>
-          </span>`).join('');
+          </span>`).join('') : '<p class="text-xs text-gray-500 dark:text-gray-400">No standing permissions. The assistant asks before every risky action.</p>';
         rulesEl.querySelectorAll('[data-rule-revoke]').forEach((button) => {
           button.onclick = async () => {
             try {
