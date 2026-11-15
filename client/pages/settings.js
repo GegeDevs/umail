@@ -150,6 +150,11 @@ export async function renderSettingsPage() {
           </button>
         </div>` : '<p class="text-xs text-amber-600 dark:text-amber-400">Read-only: you do not have settings:edit.</p>'}
       </form>
+      <section id="ai-rules-card" class="card p-5 mt-4 hidden">
+        <h2 class="panel-title mb-1">AI chat permissions</h2>
+        <p class="muted mb-3">Actions the assistant may run without asking again.</p>
+        <div id="ai-action-rules" class="flex flex-wrap gap-2"></div>
+      </section>
       <section class="card p-5 mt-4">
         <h2 class="panel-title mb-1">Notifications</h2>
         <p class="muted mb-3">Browser notifications for new unread mail while this tab is in the background.</p>
@@ -158,6 +163,20 @@ export async function renderSettingsPage() {
           <span><span class="text-sm font-medium block">Browser notifications</span><span class="text-xs text-gray-500 dark:text-gray-400">Saved per browser. Enabling asks for notification permission.</span></span>
         </label>
       </section>
+      ${hasPermission('mail:send') ? `<section class="card p-5 mt-4">
+        <h2 class="panel-title mb-1">Templates</h2>
+        <p class="muted mb-3">Reusable subjects and bodies for the composer.</p>
+        <div id="templates-list" class="space-y-2 mb-3"></div>
+        <form id="template-form" class="grid gap-2 sm:grid-cols-2">
+          <input id="template-name" class="field" placeholder="Name" required maxlength="80">
+          <input id="template-subject" class="field" placeholder="Subject" maxlength="300">
+          <textarea id="template-body" class="field sm:col-span-2" rows="3" placeholder="Body"></textarea>
+          <div class="sm:col-span-2 flex items-center gap-2">
+            <button class="btn-primary" type="submit">Save template</button>
+            <button id="template-cancel" class="btn-secondary hidden" type="button">Cancel</button>
+          </div>
+        </form>
+      </section>` : ''}
     </div>
   `;
 
@@ -259,4 +278,101 @@ export async function renderSettingsPage() {
       button.disabled = false;
     }
   });
+  const rulesCard = document.getElementById('ai-rules-card');
+  if (rulesCard) {
+    const rulesEl = document.getElementById('ai-action-rules');
+    const loadRules = async () => {
+      try {
+        const { results } = await api('/api/mail/ai/action-rules');
+        rulesCard.classList.toggle('hidden', !results.length);
+        rulesEl.innerHTML = results.map((action) => `
+          <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-1 text-xs">
+            ${escapeHtml(action)}
+            <button type="button" data-rule-revoke="${escapeHtml(action)}" class="text-red-500" title="Revoke"><span class="material-icons-outlined text-sm">close</span></button>
+          </span>`).join('');
+        rulesEl.querySelectorAll('[data-rule-revoke]').forEach((button) => {
+          button.onclick = async () => {
+            try {
+              await api(`/api/mail/ai/action-rules/${encodeURIComponent(button.dataset.ruleRevoke)}`, { method: 'DELETE' });
+              await loadRules();
+              showToast('Permission revoked.', 'success');
+            } catch (error) {
+              showToast(error.message, 'error');
+            }
+          };
+        });
+      } catch {}
+    };
+    loadRules();
+  }
+  const templateForm = document.getElementById('template-form');
+  if (templateForm) {
+    let templates = [];
+    const list = document.getElementById('templates-list');
+    const cancel = document.getElementById('template-cancel');
+    const resetForm = () => {
+      templateForm.reset();
+      delete templateForm.dataset.id;
+      cancel.classList.add('hidden');
+    };
+    const loadTemplates = async () => {
+      try {
+        templates = (await api('/api/mail/templates')).results || [];
+      } catch (error) {
+        showToast(error.message, 'error');
+        return;
+      }
+      list.innerHTML = templates.length ? templates.map((template) => `
+        <div class="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
+          <button type="button" data-template-edit="${template.id}" class="min-w-0 flex-1 text-left">
+            <span class="block text-sm font-medium truncate">${escapeHtml(template.name)}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(template.subject || 'No subject')}</span>
+          </button>
+          <button type="button" data-template-delete="${template.id}" class="btn-icon text-red-500" title="Delete"><span class="material-icons-outlined text-base">delete</span></button>
+        </div>`).join('') : '<p class="text-xs text-gray-500 dark:text-gray-400">No templates yet.</p>';
+      list.querySelectorAll('[data-template-edit]').forEach((button) => {
+        button.onclick = () => {
+          const template = templates.find((item) => item.id === Number(button.dataset.templateEdit));
+          if (!template) return;
+          templateForm.dataset.id = template.id;
+          document.getElementById('template-name').value = template.name;
+          document.getElementById('template-subject').value = template.subject || '';
+          document.getElementById('template-body').value = template.body || '';
+          cancel.classList.remove('hidden');
+          document.getElementById('template-name').focus();
+        };
+      });
+      list.querySelectorAll('[data-template-delete]').forEach((button) => {
+        button.onclick = async () => {
+          if (!confirm('Delete this template?')) return;
+          try {
+            await api(`/api/mail/templates/${button.dataset.templateDelete}`, { method: 'DELETE' });
+            await loadTemplates();
+            showToast('Template deleted.', 'success');
+          } catch (error) {
+            showToast(error.message, 'error');
+          }
+        };
+      });
+    };
+    cancel.addEventListener('click', resetForm);
+    templateForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const id = templateForm.dataset.id;
+      const body = {
+        name: document.getElementById('template-name').value,
+        subject: document.getElementById('template-subject').value,
+        body: document.getElementById('template-body').value
+      };
+      try {
+        await api(id ? `/api/mail/templates/${id}` : '/api/mail/templates', { method: id ? 'PUT' : 'POST', body });
+        resetForm();
+        await loadTemplates();
+        showToast('Template saved.', 'success');
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    });
+    await loadTemplates();
+  }
 }

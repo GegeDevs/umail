@@ -6,6 +6,8 @@ export const ACTIONS = {
   unread: { add: ['UNREAD'] },
   star: { add: ['STARRED'] },
   unstar: { remove: ['STARRED'] },
+  important: { add: ['IMPORTANT'] },
+  unimportant: { remove: ['IMPORTANT'] },
   archive: { remove: ['INBOX'] },
   inbox: { add: ['INBOX'] },
   trash: { add: ['TRASH'], remove: ['INBOX'] },
@@ -16,6 +18,13 @@ export const ACTIONS = {
 };
 
 const CHUNK = 500;
+export function permissionForAction(action) {
+  if (action === 'archive' || action === 'inbox' || action === 'snooze') return 'mail:archive';
+  if (action === 'trash' || action === 'untrash') return 'mail:delete';
+  if (action === 'spam' || action === 'not_spam') return 'mail:spam';
+  if (action === 'apply_label' || action === 'remove_label') return 'mail:labels';
+  return 'mail:modify';
+}
 
 export function applyLabelDelta(labelIds, { add = [], remove = [] }) {
   const set = new Set(labelIds);

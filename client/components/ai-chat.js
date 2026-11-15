@@ -208,8 +208,18 @@ function renderMessages() {
           ${message.sources.map(sourceLink).join('')}
         </div>`
       : '';
+    const pending = message.pendingAction
+      ? `<div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+          <div class="text-[11px] text-gray-500 dark:text-gray-400 mb-1">${escapeHtml(`Allow UMail to ${message.pendingAction.action} this thread?`)}</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button data-ai-deny="${message.clientId}" class="btn-secondary !py-1 !px-2 !text-xs">Deny</button>
+            <button data-ai-confirm="${message.clientId}" class="btn-primary !py-1 !px-2 !text-xs">Allow</button>
+            <button data-ai-always="${message.clientId}" class="btn-secondary !py-1 !px-2 !text-xs">Always allow</button>
+          </div>
+        </div>`
+      : '';
     return `<div class="max-w-[95%] rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm text-gray-800 dark:text-gray-100 space-y-1">
-      ${renderAiMarkdown(message.content)}${sources}
+      ${renderAiMarkdown(message.content)}${sources}${pending}
     </div>`;
   }).join('');
   const empty = messages.length
@@ -227,6 +237,32 @@ function renderMessages() {
   listEl.scrollTop = listEl.scrollHeight;
 }
 
+async function resolvePending(clientId, remember) {
+  const message = current?.messages.find((item) => item.clientId === clientId);
+  const pending = message?.pendingAction;
+  if (!message || !pending) return;
+  try {
+    const result = await api('/api/mail/ai/chat/confirm', { method: 'POST', body: { ...pending, remember } });
+    delete message.pendingAction;
+    message.content += result.executed ? `\n\nDone: ${pending.action}.` : '\n\nNothing changed.';
+    showToast(result.executed ? 'Action applied.' : 'Action not applied.', result.executed ? 'success' : 'error');
+    window.dispatchEvent(new CustomEvent('umail:mail-changed'));
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+  persist();
+  renderMessages();
+}
+
+function denyPending(clientId) {
+  const message = current?.messages.find((item) => item.clientId === clientId);
+  if (!message?.pendingAction) return;
+  delete message.pendingAction;
+  message.content += '\n\nAction cancelled.';
+  persist();
+  renderMessages();
+}
+
 function ensurePanel() {
   if (root) return;
   root = document.createElement('div');
@@ -239,7 +275,7 @@ function ensurePanel() {
         <span class="material-icons-outlined text-blue-600 dark:text-blue-400">forum</span>
         <div class="flex-1 min-w-0">
           <div class="font-semibold text-sm">Ask your mail</div>
-          <div class="text-[11px] text-gray-500 dark:text-gray-400">Read-only. Never send or change.</div>
+          <div class="text-[11px] text-gray-500 dark:text-gray-400">Manages mail after your confirmation.</div>
         </div>
         <button id="ai-chat-new" class="btn-icon !p-1.5 text-gray-500" title="New chat">
           <span class="material-icons-outlined">add_comment</span>
@@ -273,6 +309,12 @@ function ensurePanel() {
   root.querySelector('#ai-chat-backdrop').addEventListener('click', closePanel);
   root.addEventListener('click', (event) => {
     if (event.target.closest('[data-ai-source]')) closePanel();
+    const deny = event.target.closest('[data-ai-deny]');
+    if (deny) return denyPending(deny.dataset.aiDeny);
+    const allow = event.target.closest('[data-ai-confirm]');
+    if (allow) return resolvePending(allow.dataset.aiConfirm, false);
+    const always = event.target.closest('[data-ai-always]');
+    if (always) return resolvePending(always.dataset.aiAlways, true);
   });
   // Keep the panel inside the visible area when the mobile keyboard opens.
   const fitViewport = () => {
@@ -356,6 +398,7 @@ async function send(text) {
       }
     });
     const answer = makeMessage('assistant', result.answer, result.sources || []);
+    if (result.pendingAction) answer.pendingAction = result.pendingAction;
     session.messages.push(answer);
     persist();
     appendMessages(session, [answer]);

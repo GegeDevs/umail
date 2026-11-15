@@ -18,6 +18,70 @@ const MAILBOXES = {
   important: { title: 'Important', subtitle: 'Messages Gmail marked important', icon: 'label_important' }
 };
 
+const UNDO_ACTIONS = {
+  archive: { inverse: 'inbox', done: 'Archived.' },
+  inbox: { inverse: 'archive', done: 'Moved to inbox.' },
+  trash: { inverse: 'untrash', done: 'Moved to trash.' },
+  untrash: { inverse: 'trash', done: 'Restored.' },
+  spam: { inverse: 'not_spam', done: 'Marked as spam.' },
+  not_spam: { inverse: 'spam', done: 'Marked as not spam.' },
+  apply_label: { inverse: 'remove_label', done: 'Label applied.' },
+  remove_label: { inverse: 'apply_label', done: 'Label removed.' },
+  important: { inverse: 'unimportant', done: 'Marked important.' },
+  unimportant: { inverse: 'important', done: 'Marked not important.' }
+};
+
+function snoozePresets() {
+  const now = new Date();
+  const at = (dayOffset, hour) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() + dayOffset);
+    date.setHours(hour, 0, 0, 0);
+    return date.getTime();
+  };
+  let later = at(0, 18);
+  if (later < now.getTime() + 3600000) later = at(1, 9);
+  const saturday = at((6 - now.getDay() + 7) % 7 || 7, 9);
+  const monday = at((1 - now.getDay() + 7) % 7 || 7, 9);
+  return [
+    { label: 'Later today', until: later },
+    { label: 'Tomorrow', until: at(1, 9) },
+    { label: 'This weekend', until: saturday },
+    { label: 'Next week', until: monday }
+  ];
+}
+
+function snoozeMenuHtml(prefix) {
+  return `<details class="relative" data-snooze-menu="${prefix}">
+    <summary class="btn-icon text-gray-500 dark:text-gray-400 list-none" title="Snooze"><span class="material-icons-outlined">schedule</span></summary>
+    <div class="absolute right-0 top-9 z-40 w-44 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-sm">
+      ${snoozePresets().map((preset) => `<button type="button" data-snooze-until="${preset.until}" class="block w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700">${preset.label}</button>`).join('')}
+      <div class="border-t border-gray-100 dark:border-gray-700 mt-1 px-2 pt-2 pb-1">
+        <input type="datetime-local" data-snooze-custom class="field !py-1 !text-xs w-full" aria-label="Snooze until">
+        <button type="button" data-snooze-custom-go class="btn-secondary w-full mt-1 !py-1 !text-xs">Snooze</button>
+      </div>
+    </div>
+  </details>`;
+}
+
+function rowActions(state, unread) {
+  const buttons = [];
+  if (state.box === 'trash') {
+    buttons.push(['untrash', 'restore_from_trash', 'Restore']);
+  } else if (state.box === 'spam') {
+    buttons.push(['not_spam', 'report_off', 'Not spam']);
+    buttons.push(['trash', 'delete', 'Delete']);
+  } else if (state.box === 'archive') {
+    buttons.push(['inbox', 'inbox', 'Move to inbox']);
+    buttons.push(['trash', 'delete', 'Delete']);
+  } else {
+    buttons.push(['archive', 'archive', 'Archive']);
+    buttons.push(['trash', 'delete', 'Delete']);
+  }
+  buttons.push([unread ? 'read' : 'unread', unread ? 'mark_email_read' : 'mark_email_unread', unread ? 'Mark as read' : 'Mark as unread']);
+  return buttons.map(([action, icon, title]) => `<button data-row-action="${action}" class="btn-icon ${action === 'trash' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}" title="${title}"><span class="material-icons-outlined text-lg">${icon}</span></button>`).join('');
+}
+
 const SYSTEM_LABELS = new Set([
   'INBOX', 'UNREAD', 'STARRED', 'IMPORTANT', 'SENT', 'DRAFT', 'SPAM', 'TRASH',
   'CHAT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS',
@@ -254,8 +318,14 @@ function shell(meta, box, state) {
             <button data-bulk="star" class="btn-icon text-gray-600 dark:text-gray-300" title="Star"><span class="material-icons-outlined text-lg">star_border</span></button>
             <button data-bulk="unstar" class="btn-icon text-gray-600 dark:text-gray-300" title="Unstar"><span class="material-icons-outlined text-lg">star</span></button>
             <button data-bulk="archive" class="btn-icon text-gray-600 dark:text-gray-300" title="Archive"><span class="material-icons-outlined text-lg">archive</span></button>
+            <button data-bulk="inbox" class="btn-icon text-gray-600 dark:text-gray-300" title="Move to inbox"><span class="material-icons-outlined text-lg">inbox</span></button>
             <button data-bulk="spam" class="btn-icon text-gray-600 dark:text-gray-300" title="Report spam"><span class="material-icons-outlined text-lg">report</span></button>
+            <button data-bulk="not_spam" class="btn-icon text-gray-600 dark:text-gray-300" title="Not spam"><span class="material-icons-outlined text-lg">report_off</span></button>
             <button data-bulk="trash" class="btn-icon text-red-600 dark:text-red-400" title="Delete"><span class="material-icons-outlined text-lg">delete</span></button>
+            <button data-bulk="untrash" class="btn-icon text-gray-600 dark:text-gray-300" title="Restore"><span class="material-icons-outlined text-lg">restore_from_trash</span></button>
+            <button data-bulk="important" class="btn-icon text-gray-600 dark:text-gray-300" title="Mark important"><span class="material-icons-outlined text-lg">label_important</span></button>
+            <button data-bulk="unimportant" class="btn-icon text-gray-600 dark:text-gray-300" title="Mark not important"><span class="material-icons-outlined text-lg">label_important_outline</span></button>
+            ${snoozeMenuHtml('bulk')}
             <select id="bulk-label" class="field !w-auto !py-1 !text-xs ml-1"><option value="">Label…</option></select>
             <button data-bulk="apply_label" class="btn-icon text-gray-600 dark:text-gray-300" title="Apply label"><span class="material-icons-outlined text-lg">label</span></button>
             <button data-bulk="remove_label" class="btn-icon text-gray-600 dark:text-gray-300" title="Remove label"><span class="material-icons-outlined text-lg">label_off</span></button>
@@ -404,13 +474,7 @@ function renderRow(message, state) {
       </div>
       ${Number(message.has_attachment) ? '<span class="row-attach material-icons-outlined text-sm text-gray-400 shrink-0">attach_file</span>' : ''}
       <span class="row-date text-[11px] text-gray-400 shrink-0 w-14 text-right">${escapeHtml(date)}</span>
-      <div class="row-actions items-center gap-0.5 shrink-0">
-        <button data-row-action="archive" class="btn-icon text-gray-500 dark:text-gray-400" title="Archive"><span class="material-icons-outlined text-lg">archive</span></button>
-        <button data-row-action="trash" class="btn-icon text-gray-500 dark:text-gray-400" title="Delete"><span class="material-icons-outlined text-lg">delete</span></button>
-        <button data-row-action="${unread ? 'read' : 'unread'}" class="btn-icon text-gray-500 dark:text-gray-400" title="${unread ? 'Mark as read' : 'Mark as unread'}">
-          <span class="material-icons-outlined text-lg">${unread ? 'mark_email_read' : 'mark_email_unread'}</span>
-        </button>
-      </div>
+      <div class="row-actions items-center gap-0.5 shrink-0">${rowActions(state, unread)}</div>
       ${labels.length ? `<a href="#/label/${encodeURIComponent(labels[0])}" data-label-link class="badge bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hidden xl:inline-flex shrink-0">${escapeHtml(labels[0])}</a>` : ''}
     </article>`;
 }
@@ -562,16 +626,7 @@ function bindRows(state) {
       button.addEventListener('click', async (event) => {
         event.stopPropagation();
         try {
-          await api('/api/mail/actions', {
-            method: 'POST',
-            body: {
-              accountId: Number(row.dataset.account),
-              messageIds: [row.dataset.message],
-              action: button.dataset.rowAction
-            }
-          });
-          notifyCounts();
-          await reloadList(state);
+          await runAction(state, Number(row.dataset.account), [row.dataset.message], button.dataset.rowAction);
         } catch (error) {
           showToast(error.message, 'error');
         }
@@ -595,6 +650,51 @@ async function loadLabelOptions(state) {
 
 function reloadList(state, silent = true) {
   return state.reload ? state.reload() : loadList(state, false, silent);
+}
+async function runAction(state, accountId, messageIds, action, labelId = '') {
+  await api('/api/mail/actions', { method: 'POST', body: { accountId, messageIds, action, labelId } });
+  const undo = UNDO_ACTIONS[action];
+  if (!undo) showToast('Message updated.', 'success');
+  if (undo) {
+    showToast(undo.done, 'success', {
+      label: 'Undo',
+      onClick: async () => {
+        try {
+          await api('/api/mail/actions', { method: 'POST', body: { accountId, messageIds, action: undo.inverse, labelId } });
+          notifyCounts();
+          await reloadList(state);
+          showToast('Action undone.', 'success');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+    });
+  }
+  notifyCounts();
+  await reloadList(state);
+}
+async function snoozeGroups(state, groups, until) {
+  let done = 0;
+  let failed = 0;
+  for (const [accountId, messageIds] of groups) {
+    try {
+      await api('/api/mail/snooze', { method: 'POST', body: { accountId, messageIds, until } });
+      done += messageIds.length;
+    } catch {
+      failed += messageIds.length;
+    }
+  }
+  showToast(failed ? `${done} snoozed, ${failed} failed.` : `${done} messages snoozed.`, failed ? 'error' : 'success');
+  notifyCounts();
+  await reloadList(state);
+}
+function groupsFromSelected(state) {
+  const groups = new Map();
+  for (const item of state.selected.values()) {
+    if (!groups.has(item.accountId)) groups.set(item.accountId, []);
+    groups.get(item.accountId).push(item.messageId);
+  }
+  return groups;
 }
 
 function bindSelectAll(state) {
@@ -631,6 +731,17 @@ function paintBulk(state) {
   if (selectAll) selectAll.checked = count > 0 && count === state.messages.length;
   const label = document.getElementById('bulk-count');
   if (label) label.textContent = `${count} selected`;
+  const visible = state.box === 'archive' ? ['inbox', 'trash', 'important', 'unimportant']
+    : state.box === 'spam' ? ['not_spam', 'trash', 'important', 'unimportant']
+    : state.box === 'trash' ? ['untrash', 'important', 'unimportant']
+    : ['archive', 'trash', 'important', 'unimportant'];
+  bar.querySelectorAll('[data-bulk]').forEach((button) => {
+    const action = button.dataset.bulk;
+    if (['apply_label', 'remove_label', 'read', 'unread', 'star', 'unstar'].includes(action)) return;
+    // Inline style: .btn-icon's display beats the .hidden utility.
+    button.style.display = visible.includes(action) ? '' : 'none';
+  });
+  bindSnoozeMenu(bar, (until) => snoozeGroups(state, groupsFromSelected(state), until));
   document.getElementById('bulk-clear')?.addEventListener('click', () => {
     state.selected.clear();
     state.selectionAnchor = null;
@@ -645,11 +756,7 @@ function paintBulk(state) {
         showToast('Choose a label first.', 'error');
         return;
       }
-      const groups = new Map();
-      for (const item of state.selected.values()) {
-        if (!groups.has(item.accountId)) groups.set(item.accountId, []);
-        groups.get(item.accountId).push(item.messageId);
-      }
+      const groups = groupsFromSelected(state);
       let done = 0;
       let failed = 0;
       for (const [accountId, messageIds] of groups) {
@@ -671,7 +778,27 @@ function paintBulk(state) {
       }
       state.selected.clear();
       state.selectionAnchor = null;
-      showToast(failed ? `${done} updated, ${failed} failed.` : `${done} messages updated.`, failed ? 'error' : 'success');
+      const undo = UNDO_ACTIONS[action];
+      showToast(failed ? `${done} updated, ${failed} failed.` : `${done} messages updated.`, failed ? 'error' : 'success', undo && !failed ? {
+        label: 'Undo',
+        onClick: async () => {
+          try {
+            for (const [accountId, messageIds] of groups) {
+              let undoLabelId = '';
+              if (needsLabel) {
+                const label = state.labels.find((item) => item.name === labelName);
+                undoLabelId = label?.accounts.find((entry) => entry.account_id === accountId)?.gmail_label_id || '';
+              }
+              await api('/api/mail/actions', { method: 'POST', body: { accountId, messageIds, action: undo.inverse, labelId: undoLabelId } });
+            }
+            notifyCounts();
+            await reloadList(state);
+            showToast('Action undone.', 'success');
+          } catch (error) {
+            showToast(error.message, 'error');
+          }
+        }
+      } : null);
       notifyCounts();
       await reloadList(state);
     };
@@ -818,6 +945,55 @@ async function openThread(state, accountId, threadId, silent = false) {
   }
 }
 
+function labelMenuHtml(state, thread, account) {
+  const latest = thread.messages[thread.messages.length - 1];
+  const active = new Set(labelList(latest.label_ids));
+  const labels = (state.labels || []).map((label) => {
+    const gmailId = label.accounts?.find((entry) => entry.account_id === account.id)?.gmail_label_id;
+    return gmailId ? { name: label.name, gmailId, on: active.has(gmailId) } : null;
+  }).filter(Boolean);
+  if (!labels.length) return '';
+  return `<details class="relative" data-label-menu>
+    <summary class="btn-icon text-gray-500 dark:text-gray-400 list-none" title="Labels"><span class="material-icons-outlined">label</span></summary>
+    <div class="absolute right-0 top-9 z-40 w-52 max-h-72 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-sm">
+      ${labels.map((label) => `<button type="button" data-reader-label="${escapeHtml(label.gmailId)}" data-label-on="${label.on ? '1' : '0'}"
+        class="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700">
+        <span class="material-icons-outlined text-base ${label.on ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}">${label.on ? 'check_box' : 'check_box_outline_blank'}</span>
+        <span class="truncate">${escapeHtml(label.name)}</span>
+      </button>`).join('')}
+    </div>
+  </details>`;
+}
+
+function readerContextActions(state) {
+  const button = (action, icon, title, red = false) => `<button data-reader-action="${action}" class="btn-icon ${red ? 'text-red-500' : 'text-gray-500'}" title="${title}"><span class="material-icons-outlined">${icon}</span></button>`;
+  if (state.box === 'trash') return button('untrash', 'restore_from_trash', 'Restore');
+  if (state.box === 'spam') return button('not_spam', 'report_off', 'Not spam') + button('trash', 'delete', 'Trash', true);
+  if (state.box === 'archive') return button('inbox', 'inbox', 'Move to inbox') + button('trash', 'delete', 'Trash', true);
+  return button('archive', 'archive', 'Archive') + button('trash', 'delete', 'Trash', true);
+}
+
+function bindSnoozeMenu(root, onPick) {
+  root.querySelectorAll('[data-snooze-menu]').forEach((menu) => {
+    menu.querySelectorAll('[data-snooze-until]').forEach((button) => {
+      button.onclick = () => {
+        menu.open = false;
+        onPick(Number(button.dataset.snoozeUntil));
+      };
+    });
+    const custom = menu.querySelector('[data-snooze-custom]');
+    menu.querySelector('[data-snooze-custom-go]')?.addEventListener('click', () => {
+      const until = new Date(custom?.value || '').getTime();
+      if (!Number.isFinite(until)) {
+        showToast('Pick a date and time.', 'error');
+        return;
+      }
+      menu.open = false;
+      onPick(until);
+    });
+  });
+}
+
 function renderThread(state, data) {
   const thread = data.thread;
   const account = data.account;
@@ -842,8 +1018,12 @@ function renderThread(state, data) {
           <button data-reader-action="star" class="btn-icon ${starred ? 'text-amber-400' : 'text-gray-400'}" title="${starred ? 'Unstar' : 'Star'}">
             <span class="material-icons-outlined">${starred ? 'star' : 'star_border'}</span>
           </button>
-          <button data-reader-action="archive" class="btn-icon text-gray-500" title="Archive"><span class="material-icons-outlined">archive</span></button>
-          <button data-reader-action="trash" class="btn-icon text-red-500" title="Trash"><span class="material-icons-outlined">delete</span></button>
+          <button data-reader-action="important" class="btn-icon ${Number(latest.is_important) ? 'text-amber-500' : 'text-gray-400'}" title="${Number(latest.is_important) ? 'Mark not important' : 'Mark important'}">
+            <span class="material-icons-outlined">${Number(latest.is_important) ? 'label_important' : 'label_important_outline'}</span>
+          </button>
+          ${snoozeMenuHtml('reader')}
+          ${labelMenuHtml(state, thread, account)}
+          ${readerContextActions(state)}
           <button data-reader-action="unread" class="btn-icon text-gray-500 hidden sm:inline-flex" title="Mark unread"><span class="material-icons-outlined">mark_email_unread</span></button>
           <button data-ai-summary class="btn-icon text-blue-600 dark:text-blue-400" title="Summarize with AI"><span class="material-icons-outlined">auto_awesome</span></button>
           <a href="https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account.email)}#all/${encodeURIComponent(thread.gmail_thread_id)}" target="_blank" rel="noopener noreferrer" class="btn-icon text-gray-500 hidden sm:inline-flex" title="Open in Gmail"><span class="material-icons-outlined">open_in_new</span></a>
@@ -976,36 +1156,42 @@ function bindThread(state, data) {
     });
   });
 
-  const act = async (action, messageIds) => {
+  const act = async (action, messageIds, labelId = '') => {
     try {
-      await api('/api/mail/actions', {
-        method: 'POST',
-        body: { accountId: thread.account_id, messageIds, action }
-      });
-      if (['archive', 'trash', 'read', 'unread'].includes(action) && action !== 'read') {
+      const closes = ['archive', 'trash', 'spam', 'inbox', 'untrash', 'not_spam'].includes(action);
+      await runAction(state, thread.account_id, messageIds, action, labelId);
+      if (closes) {
         state.thread = null;
         document.getElementById('mail-layout')?.classList.remove('reader-open');
         reader.innerHTML = readerEmpty();
       } else if (state.thread) {
         await openThread(state, thread.account_id, thread.gmail_thread_id, true);
       }
-      await reloadList(state);
-      notifyCounts();
-      showToast('Message updated.', 'success');
     } catch (error) {
       showToast(error.message, 'error');
     }
   };
-
   reader.querySelectorAll('[data-reader-action]').forEach((button) => {
     button.addEventListener('click', () => {
       const action = button.dataset.readerAction;
       const ids = thread.messages.map((message) => message.gmail_message_id);
       if (action === 'star') act(Number(latest.is_starred) ? 'unstar' : 'star', [latest.gmail_message_id]);
-      else if (action === 'archive') act('archive', ids);
-      else if (action === 'trash') act('trash', ids);
+      else if (action === 'important') act(Number(latest.is_important) ? 'unimportant' : 'important', ids);
       else if (action === 'unread') act('unread', [latest.gmail_message_id]);
+      else act(action, ids);
     });
+  });
+  reader.querySelectorAll('[data-reader-label]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const ids = thread.messages.map((message) => message.gmail_message_id);
+      act(button.dataset.labelOn === '1' ? 'remove_label' : 'apply_label', ids, button.dataset.readerLabel);
+    });
+  });
+  bindSnoozeMenu(reader, async (until) => {
+    await snoozeGroups(state, new Map([[thread.account_id, thread.messages.map((message) => message.gmail_message_id)]]), until);
+    state.thread = null;
+    document.getElementById('mail-layout')?.classList.remove('reader-open');
+    reader.innerHTML = readerEmpty();
   });
 
   const self = String(account.email || '').toLowerCase();

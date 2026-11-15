@@ -7,6 +7,7 @@ import { getDB, initDB } from './db/index.js';
 import { getEnv } from './config.js';
 import { startSyncScheduler } from './services/sync-scheduler.js';
 import { startOutboxWorker } from './services/outbox.js';
+import { startSnoozeWorker } from './services/snooze.js';
 import { encryptStoredTokens, encryptStoredChat, hasTokenEncryptionKey } from './services/token-crypto.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,4 +41,5 @@ const port = Number(process.env.PORT) || 3000;
 const server = Bun.serve({ port, fetch: app.fetch });
 startSyncScheduler(db, env);
 startOutboxWorker(db, env);
+startSnoozeWorker(db, env);
 console.log(`UMail running on ${server.url}`);

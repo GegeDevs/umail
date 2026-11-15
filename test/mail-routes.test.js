@@ -804,3 +804,156 @@ test('old chat schema gains the tombstone column and migrates legacy messages', 
   const stored = await db.prepare('SELECT session_id, client_id FROM ai_chat_messages').all();
   expect(stored.results).toEqual([{ session_id: 'legacy-session-2', client_id: 'legacy-0' }]);
 });
+
+test('important, snooze, templates, and contacts routes', async () => {
+  const { db, app } = await setup();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/messages/batchModify')) return new Response(null, { status: 204 });
+    return Response.json({ error: { message: 'not found' } }, { status: 404 });
+  };
+  try {
+    const important = await app.request('/api/mail/actions', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ accountId: 1, messageIds: ['m1'], action: 'important' })
+    });
+    expect(important.status).toBe(200);
+    let row = await db.prepare("SELECT label_ids, is_important FROM messages WHERE gmail_message_id = 'm1'").first();
+    expect(row.label_ids).toContain('IMPORTANT');
+    expect(row.is_important).toBe(1);
+
+    const until = Date.now() + 3600000;
+    const snoozed = await app.request('/api/mail/snooze', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ accountId: 1, messageIds: ['m1'], until })
+    });
+    expect(snoozed.status).toBe(200);
+    row = await db.prepare("SELECT label_ids, snoozed_until FROM messages WHERE gmail_message_id = 'm1'").first();
+    expect(row.label_ids).not.toContain('INBOX');
+    expect(row.snoozed_until).toBe(until);
+
+    const { processSnoozed } = await import('../src/services/snooze.js');
+    await db.prepare('UPDATE messages SET snoozed_until = ? WHERE gmail_message_id = ?').bind(Date.now() - 1000, 'm1').run();
+    expect(await processSnoozed(db, {})).toBe(1);
+    row = await db.prepare("SELECT label_ids, snoozed_until FROM messages WHERE gmail_message_id = 'm1'").first();
+    expect(row.label_ids).toContain('INBOX');
+    expect(row.snoozed_until).toBe(null);
+
+    const created = await app.request('/api/mail/templates', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ name: 'Greeting', subject: 'Hi', body: 'Hello there' })
+    });
+    expect(created.status).toBe(200);
+    const { id } = await created.json();
+    const listed = await (await app.request('/api/mail/templates', { headers: headers() })).json();
+    expect(listed.results).toHaveLength(1);
+    expect(listed.results[0].name).toBe('Greeting');
+    const updated = await app.request(`/api/mail/templates/${id}`, {
+      method: 'PUT',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ name: 'Greeting 2', subject: 'Hi', body: 'Hello' })
+    });
+    expect(updated.status).toBe(200);
+    expect((await db.prepare('SELECT name FROM templates WHERE id = ?').bind(id).first()).name).toBe('Greeting 2');
+    const removed = await app.request(`/api/mail/templates/${id}`, {
+      method: 'DELETE',
+      headers: headers({ 'x-csrf-token': 'csrf' })
+    });
+    expect(removed.status).toBe(200);
+    expect((await db.prepare('SELECT COUNT(*) AS n FROM templates').first()).n).toBe(0);
+
+    const contacts = await (await app.request('/api/mail/contacts?q=bob', { headers: headers() })).json();
+    expect(contacts.results.map((contact) => contact.address)).toContain('bob@example.com');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('AI chat asks for confirmation before risky actions and remembers always allow', async () => {
+  const { db, app } = await setup();
+  await db.prepare(`
+    INSERT INTO settings (key, value) VALUES
+      ('ai_base_url', 'https://ai.test/v1'),
+      ('ai_api_key', 'test-key'),
+      ('ai_model', 'test-model')
+  `).run();
+  const originalFetch = globalThis.fetch;
+  let aiCalls = 0;
+  const toolResults = [];
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'ai.test') {
+      aiCalls += 1;
+      const request = JSON.parse(options.body);
+      const last = request.messages.at(-1).content;
+      if (last.startsWith('TOOL RESULT')) toolResults.push(last);
+      const content = aiCalls === 1
+        ? '{"tool":"manage_thread","args":{"accountId":1,"threadId":"t1","action":"archive"}}'
+        : '{"answer":"Menunggu konfirmasi."}';
+      return Response.json({ choices: [{ message: { content } }] });
+    }
+    if (url.hostname === 'gmail.googleapis.com') {
+      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'm1' }] });
+      if (url.pathname.endsWith('/messages/batchModify')) return new Response(null, { status: 204 });
+    }
+    return Response.json({ error: { message: 'not found' } }, { status: 404 });
+  };
+  try {
+    const chat = await app.request('/api/mail/ai/chat', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Arsipkan email ini' }] })
+    });
+    expect(chat.status).toBe(200);
+    const chatData = await chat.json();
+    expect(chatData.pendingAction).toEqual({ accountId: 1, threadId: 't1', action: 'archive', label: '', until: '' });
+    expect((await db.prepare("SELECT label_ids FROM messages WHERE gmail_message_id = 'm1'").first()).label_ids).toContain('INBOX');
+    expect(toolResults[0]).toContain('"pendingAction"');
+
+    const confirmed = await app.request('/api/mail/ai/chat/confirm', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ ...chatData.pendingAction, remember: true })
+    });
+    expect(confirmed.status).toBe(200);
+    expect((await confirmed.json()).executed).toBe(true);
+    expect((await db.prepare("SELECT label_ids FROM messages WHERE gmail_message_id = 'm1'").first()).label_ids).not.toContain('INBOX');
+    const rules = await (await app.request('/api/mail/ai/action-rules', { headers: headers() })).json();
+    expect(rules.results).toContain('archive');
+
+    aiCalls = 0;
+    toolResults.length = 0;
+    globalThis.fetch = async (input, options = {}) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'ai.test') {
+        aiCalls += 1;
+        const request = JSON.parse(options.body);
+        const last = request.messages.at(-1).content;
+        if (last.startsWith('TOOL RESULT')) toolResults.push(last);
+        const content = aiCalls === 1
+          ? '{"tool":"manage_thread","args":{"accountId":1,"threadId":"t1","action":"archive"}}'
+          : '{"answer":"Sudah diarsipkan."}';
+        return Response.json({ choices: [{ message: { content } }] });
+      }
+      if (url.hostname === 'gmail.googleapis.com') {
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'm1' }] });
+        if (url.pathname.endsWith('/messages/batchModify')) return new Response(null, { status: 204 });
+      }
+      return Response.json({ error: { message: 'not found' } }, { status: 404 });
+    };
+    const second = await app.request('/api/mail/ai/chat', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Arsipkan lagi' }] })
+    });
+    expect(second.status).toBe(200);
+    expect((await second.json()).pendingAction).toBeUndefined();
+    expect(toolResults[0]).toContain('"executed":true');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

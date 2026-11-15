@@ -73,7 +73,12 @@ export async function openComposer(options = {}) {
   root.innerHTML = `
     <div id="composer" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 md:rounded-xl shadow-2xl flex flex-col h-[85vh] md:h-auto transition-all">
       <div class="flex items-center justify-between px-4 py-2.5 bg-gray-100 dark:bg-gray-900 md:rounded-t-xl">
-        <span class="text-sm font-semibold">${titleFor(state.mode)}</span>
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-sm font-semibold">${titleFor(state.mode)}</span>
+          <select id="composer-template" class="field !w-auto !py-0.5 !text-[11px]" title="Insert template">
+            <option value="">Template</option>
+          </select>
+        </div>
         <div class="flex items-center gap-1">
           <button id="composer-minimize" class="btn-icon text-gray-500" title="Minimize"><span class="material-icons-outlined text-lg">remove</span></button>
           <button id="composer-expand" class="btn-icon text-gray-500" title="Expand"><span class="material-icons-outlined text-lg">open_in_full</span></button>
@@ -85,12 +90,12 @@ export async function openComposer(options = {}) {
           ${accounts.map((account) => `<option value="${account.id}" ${account.id === state.accountId ? 'selected' : ''}>${escapeHtml(account.email)}</option>`).join('')}
         </select>
         <div class="relative">
-          <input id="composer-to" class="field !py-1.5 pr-16" placeholder="To — separate addresses with commas" value="${escapeHtml(state.to)}" autocomplete="off">
+          <input id="composer-to" class="field !py-1.5 pr-16" placeholder="To — separate addresses with commas" value="${escapeHtml(state.to)}" autocomplete="off" list="composer-contacts">
           <button id="composer-cc-toggle" type="button" class="absolute right-1 top-1/2 -translate-y-1/2 text-[11px] text-gray-500 hover:text-blue-600 px-2 py-1">Cc/Bcc</button>
         </div>
         <div id="composer-cc-wrap" class="space-y-2 ${state.cc || state.bcc ? '' : 'hidden'}">
-          <input id="composer-cc" class="field !py-1.5" placeholder="Cc — separate addresses with commas" value="${escapeHtml(state.cc)}" autocomplete="off">
-          <input id="composer-bcc" class="field !py-1.5" placeholder="Bcc — separate addresses with commas" value="${escapeHtml(state.bcc)}" autocomplete="off">
+          <input id="composer-cc" class="field !py-1.5" placeholder="Cc — separate addresses with commas" value="${escapeHtml(state.cc)}" autocomplete="off" list="composer-contacts">
+          <input id="composer-bcc" class="field !py-1.5" placeholder="Bcc — separate addresses with commas" value="${escapeHtml(state.bcc)}" autocomplete="off" list="composer-contacts">
         </div>
         <input id="composer-subject" class="field !py-1.5" placeholder="Subject" value="${escapeHtml(state.subject)}" autocomplete="off">
         <div class="rounded-lg border border-gray-200 dark:border-gray-700">
@@ -113,6 +118,7 @@ export async function openComposer(options = {}) {
           <div id="composer-editor" contenteditable="true" data-placeholder="Write your message..."
             class="composer-editor field !border-0 !rounded-t-none min-h-[180px] max-h-[45vh] overflow-y-auto text-sm"></div>
         </div>
+        <datalist id="composer-contacts"></datalist>
         <div id="composer-attachments" class="flex flex-wrap gap-1.5"></div>
       </div>
       <div id="composer-footer" class="flex items-center gap-2 px-4 py-3 border-t border-gray-100 dark:border-gray-700">
@@ -169,6 +175,45 @@ export async function openComposer(options = {}) {
   const initialHtml = state.bodyHtml || '';
   if (initialHtml) editor.innerHTML = initialHtml;
   if (!editor.querySelector('[data-signature-block]')) applySignature();
+  const contactList = byId('composer-contacts');
+  let contactTimer = null;
+  const loadContacts = async (q = '') => {
+    try {
+      const { results } = await api(`/api/mail/contacts?q=${encodeURIComponent(q)}`);
+      contactList.innerHTML = (results || []).map((contact) =>
+        `<option value="${escapeHtml(contact.address)}">${escapeHtml(contact.name || '')}</option>`).join('');
+    } catch {}
+  };
+  ['composer-to', 'composer-cc', 'composer-bcc'].forEach((id) => {
+    byId(id)?.addEventListener('input', (event) => {
+      const value = event.target.value;
+      const token = value.slice(value.lastIndexOf(',') + 1).trim();
+      clearTimeout(contactTimer);
+      contactTimer = setTimeout(() => loadContacts(token), 200);
+    });
+  });
+  loadContacts();
+  const templateSelect = byId('composer-template');
+  let templates = [];
+  if (templateSelect) {
+    api('/api/mail/templates').then(({ results }) => {
+      templates = results || [];
+      templateSelect.innerHTML = '<option value="">Template</option>' + templates.map((template) =>
+        `<option value="${template.id}">${escapeHtml(template.name)}</option>`).join('');
+    }).catch(() => {});
+    templateSelect.addEventListener('change', () => {
+      const template = templates.find((item) => item.id === Number(templateSelect.value));
+      templateSelect.value = '';
+      if (!template) return;
+      if (template.subject) byId('composer-subject').value = template.subject;
+      if (template.body) {
+        editor.innerHTML = textHtml(template.body);
+        applySignature();
+      }
+      setStatus('Template applied');
+      persistDraft();
+    });
+  }
 
   const isEmpty = () => {
     const fields = readFields();

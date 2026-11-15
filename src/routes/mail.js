@@ -6,13 +6,14 @@ import { parseMessageBody, rewriteInlineImages } from '../services/mail-body.js'
 import { signedAttachmentUrl } from '../services/signing.js';
 import { storeAttachments, storeMessages } from '../services/mail-store.js';
 import { normalizeMessage } from '../services/gmail-parse.js';
-import { applyAction } from '../services/mail-actions.js';
+import { applyAction, permissionForAction } from '../services/mail-actions.js';
+import { snoozeMessages } from '../services/snooze.js';
 import { sendMail, parseRecipients, MailError, discardLocalDraft } from '../services/mail-send.js';
 import { createDraft, updateDraft, deleteDraft } from '../services/gmail.js';
 import { buildMime } from '../services/mime.js';
 import { enqueueOutbox } from '../services/outbox.js';
 import { summarizeThread, composeAssist } from '../services/ai-summary.js';
-import { chatWithMail } from '../services/ai-chat.js';
+import { chatWithMail, confirmAiAction } from '../services/ai-chat.js';
 import { encryptToken, decryptToken } from '../services/token-crypto.js';
 
 const mail = new Hono();
@@ -413,6 +414,104 @@ mail.delete('/ai/chat/sessions/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+mail.post('/snooze', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:archive', user);
+  if (err) return err;
+  const body = await c.req.json().catch(() => ({}));
+  const accountId = Number(body.accountId);
+  const messageIds = Array.isArray(body.messageIds) ? body.messageIds : [];
+  const until = Number(body.until);
+  if (!accountId || !messageIds.length) return c.json({ error: 'accountId and messageIds are required' }, 400);
+  try {
+    return c.json(await snoozeMessages(c.get('db'), c.get('env') || {}, accountId, messageIds, until));
+  } catch (error) {
+    return c.json({ error: error.message || 'Snooze failed' }, error.status || 502);
+  }
+});
+
+mail.get('/templates', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:send', user);
+  if (err) return err;
+  const { results } = await c.get('db').prepare(
+    'SELECT id, name, subject, body FROM templates WHERE user_id = ? ORDER BY name COLLATE NOCASE'
+  ).bind(user.id).all();
+  return c.json({ results });
+});
+
+mail.post('/templates', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:send', user);
+  if (err) return err;
+  const body = await c.req.json().catch(() => ({}));
+  const name = String(body.name || '').trim().slice(0, 80);
+  const subject = String(body.subject || '').slice(0, 300);
+  const text = String(body.body || '').slice(0, 20000);
+  if (!name) return c.json({ error: 'name is required' }, 400);
+  const result = await c.get('db').prepare(
+    'INSERT INTO templates (user_id, name, subject, body) VALUES (?, ?, ?, ?)'
+  ).bind(user.id, name, subject, text).run();
+  return c.json({ id: result.meta.last_row_id });
+});
+
+mail.put('/templates/:id', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:send', user);
+  if (err) return err;
+  const body = await c.req.json().catch(() => ({}));
+  const name = String(body.name || '').trim().slice(0, 80);
+  if (!name) return c.json({ error: 'name is required' }, 400);
+  const result = await c.get('db').prepare(`
+    UPDATE templates SET name = ?, subject = ?, body = ?, updated_at = datetime('now')
+    WHERE id = ? AND user_id = ?
+  `).bind(name, String(body.subject || '').slice(0, 300), String(body.body || '').slice(0, 20000),
+    Number(c.req.param('id')), user.id).run();
+  if (!result.meta.changes) return c.json({ error: 'Template not found' }, 404);
+  return c.json({ ok: true });
+});
+
+mail.delete('/templates/:id', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:send', user);
+  if (err) return err;
+  await c.get('db').prepare('DELETE FROM templates WHERE id = ? AND user_id = ?')
+    .bind(Number(c.req.param('id')), user.id).run();
+  return c.json({ ok: true });
+});
+
+mail.get('/contacts', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:view', user);
+  if (err) return err;
+  const q = String(c.req.query('q') || '').trim().toLowerCase();
+  const like = `%${q}%`;
+  const { results } = await c.get('db').prepare(`
+    SELECT address, MAX(name) AS name FROM (
+      SELECT from_email AS address, from_name AS name FROM messages WHERE from_email IS NOT NULL
+      UNION ALL
+      SELECT json_extract(j.value, '$.email') AS address, json_extract(j.value, '$.name') AS name
+      FROM messages m, json_each(m.to_json) j
+    )
+    WHERE address IS NOT NULL AND address != ''
+      AND (? = '' OR lower(address) LIKE ? OR lower(name) LIKE ?)
+    GROUP BY address ORDER BY address LIMIT 20
+  `).bind(q, like, like).all();
+  return c.json({ results });
+});
+
 mail.post('/ai/chat', async (c) => {
   const user = c.get('user');
   let err = requirePage(c, 'mail', user);
@@ -421,11 +520,48 @@ mail.post('/ai/chat', async (c) => {
   if (err) return err;
   const body = await c.req.json().catch(() => ({}));
   try {
-    const result = await chatWithMail(c.get('db'), c.get('env') || {}, body.messages);
+    const result = await chatWithMail(c.get('db'), c.get('env') || {}, body.messages, user);
     return c.json(result);
   } catch (error) {
     return c.json({ error: error.message || 'AI chat failed' }, error.status || 502);
   }
+});
+
+mail.post('/ai/chat/confirm', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:read', user);
+  if (err) return err;
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    return c.json(await confirmAiAction(c.get('db'), c.get('env') || {}, user, body, Boolean(body.remember)));
+  } catch (error) {
+    return c.json({ error: error.message || 'Action failed' }, error.status || 502);
+  }
+});
+
+mail.get('/ai/action-rules', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:read', user);
+  if (err) return err;
+  const { results } = await c.get('db').prepare(
+    'SELECT action FROM ai_action_rules WHERE user_id = ? AND allowed = 1 ORDER BY action'
+  ).bind(user.id).all();
+  return c.json({ results: results.map((row) => row.action) });
+});
+
+mail.delete('/ai/action-rules/:action', async (c) => {
+  const user = c.get('user');
+  let err = requirePage(c, 'mail', user);
+  if (err) return err;
+  err = requirePermission(c, 'mail:read', user);
+  if (err) return err;
+  await c.get('db').prepare('DELETE FROM ai_action_rules WHERE user_id = ? AND action = ?')
+    .bind(user.id, c.req.param('action')).run();
+  return c.json({ ok: true });
 });
 
 mail.post('/threads/:accountId/:threadId/summary', async (c) => {
@@ -448,10 +584,7 @@ mail.post('/actions', async (c) => {
   const user = c.get('user');
   const body = await c.req.json().catch(() => ({}));
   const action = String(body.action || '');
-  const permission = ['archive'].includes(action) ? 'mail:archive'
-    : ['trash', 'untrash'].includes(action) ? 'mail:delete'
-    : ['spam', 'not_spam'].includes(action) ? 'mail:spam'
-    : 'mail:modify';
+  const permission = permissionForAction(action);
   let err = requirePage(c, 'mail', user);
   if (err) return err;
   err = requirePermission(c, permission, user);

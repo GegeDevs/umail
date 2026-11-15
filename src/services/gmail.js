@@ -167,10 +167,11 @@ export async function deleteLabel(db, env, accountId, labelId) {
   });
 }
 
-export function listMessages(db, env, accountId, { q = '', maxResults = 500, pageToken = '' } = {}) {
+export function listMessages(db, env, accountId, { q = '', maxResults = 500, pageToken = '', threadId = '' } = {}) {
   const params = new URLSearchParams({ maxResults: String(maxResults) });
   if (q) params.set('q', q);
   if (pageToken) params.set('pageToken', pageToken);
+  if (threadId) params.set('threadId', threadId);
   return gmailJson(db, env, accountId, `/users/me/messages?${params}`);
 }
 

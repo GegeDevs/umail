@@ -220,6 +220,24 @@ export async function initDB(database) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS ai_action_rules (
+      user_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      allowed INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, action),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS activity_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER,
@@ -307,6 +325,7 @@ export async function initDB(database) {
 
   await ensureColumn(database, 'google_accounts', 'signature', "signature TEXT DEFAULT ''");
   await ensureColumn(database, 'drafts', 'body_html', "body_html TEXT DEFAULT ''");
+  await ensureColumn(database, 'messages', 'snoozed_until', 'snoozed_until INTEGER');
 }
 
 async function ensureColumn(database, table, column, ddl) {
