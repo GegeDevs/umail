@@ -204,6 +204,9 @@ export async function renderMailPage(params = {}) {
 
   await loadLabelOptions(state);
   await loadList(state, false);
+  const threadAccount = Number(params.account) || 0;
+  const threadId = String(params.thread || '');
+  if (threadAccount && threadId) await openThread(state, threadAccount, threadId);
 
   return () => {
     clearInterval(state.timer);

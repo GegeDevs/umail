@@ -524,6 +524,57 @@ test('AI chat can list the newest mail with an empty search query', async () => 
     globalThis.fetch = originalFetch;
   }
 });
+test('AI chat searches Gmail live and stores the results', async () => {
+  const { db, app } = await setup();
+  await db.prepare(`
+    INSERT INTO settings (key, value) VALUES
+      ('ai_base_url', 'https://ai.test/v1'),
+      ('ai_api_key', 'test-key'),
+      ('ai_model', 'test-model')
+  `).run();
+  const originalFetch = globalThis.fetch;
+  const aiRequests = [];
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'ai.test') {
+      aiRequests.push(JSON.parse(options.body));
+      const content = aiRequests.length === 1
+        ? '{"tool":"search_mail","args":{"query":"","accountId":0}}'
+        : '{"answer":"Email live terbaru: Live subject."}';
+      return Response.json({ choices: [{ message: { content } }] });
+    }
+    if (url.hostname === 'gmail.googleapis.com') {
+      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'live1' }] });
+      return Response.json({
+        id: 'live1',
+        threadId: 'lt1',
+        internalDate: String(Date.now()),
+        snippet: 'from Gmail',
+        labelIds: ['INBOX'],
+        payload: { headers: [
+          { name: 'From', value: 'Live Sender <live@example.com>' },
+          { name: 'Subject', value: 'Live subject' }
+        ] }
+      });
+    }
+    return Response.json({ error: { message: 'not found' } }, { status: 404 });
+  };
+  try {
+    const res = await app.request('/api/mail/ai/chat', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Ada email hari ini?' }] })
+    });
+    expect(res.status).toBe(200);
+    const toolResult = aiRequests[1].messages.at(-1).content;
+    expect(toolResult).toContain('"live":true');
+    expect(toolResult).toContain('"subject":"Live subject"');
+    const stored = await db.prepare("SELECT subject FROM messages WHERE gmail_message_id = 'live1'").first();
+    expect(stored.subject).toBe('Live subject');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test('AI chat returns an error when the provider keeps refusing to use tools', async () => {
   const { db, app } = await setup();
   await db.prepare(`

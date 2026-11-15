@@ -188,7 +188,10 @@ function renderHistory() {
 
 function sourceLink(source) {
   const label = [source.from, source.subject].filter(Boolean).join(' — ');
-  return `<a href="#/search?q=${encodeURIComponent(source.subject || '')}" data-ai-source
+  const href = source.accountId && source.threadId
+    ? `#/thread/${Number(source.accountId)}/${encodeURIComponent(source.threadId)}`
+    : `#/search?q=${encodeURIComponent(source.subject || '')}`;
+  return `<a href="${href}" data-ai-source
     class="block truncate text-xs text-blue-600 dark:text-blue-400 hover:underline">${escapeHtml(label)}</a>`;
 }
 

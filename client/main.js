@@ -89,6 +89,7 @@ function initRoutes() {
   registerRoute('/', guarded('mail', renderMailPage));
   registerRoute('/label/:name', guarded('mail', renderMailPage));
   registerRoute('/search', guarded('mail', renderSearchPage));
+  registerRoute('/thread/:account/:thread', guarded('mail', renderMailPage));
   registerRoute('/accounts', guarded('accounts', renderAccountsPage));
   registerRoute('/settings', guarded('settings', renderSettingsPage));
   registerRoute('/users', guarded('admin', renderUsersPage));
