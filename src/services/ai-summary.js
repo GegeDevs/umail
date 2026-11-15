@@ -46,7 +46,7 @@ async function messageText(db, env, accountId, row) {
   }
 }
 
-export async function chatCompletion(db, env, messages, { maxTokens = 500, temperature = 0.2 } = {}) {
+export async function chatCompletion(db, env, messages, { maxTokens = 500, temperature = 0.2, timeoutMs = 30000, retries = 0 } = {}) {
   const config = await loadAiConfig(db, env);
   if (!config) {
     throw new AiError('AI is not configured. Add AI settings in Settings.', 503);
@@ -55,23 +55,31 @@ export async function chatCompletion(db, env, messages, { maxTokens = 500, tempe
   const headers = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
 
-  let res;
-  try {
-    res = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      headers,
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({ model: config.model, temperature, max_tokens: maxTokens, messages })
-    });
-  } catch (error) {
-    throw new AiError(`AI request failed: ${error.message}`, 502);
+  const ask = async (list) => {
+    let res;
+    try {
+      res = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers,
+        signal: AbortSignal.timeout(timeoutMs),
+        body: JSON.stringify({ model: config.model, temperature, max_tokens: maxTokens, messages: list })
+      });
+    } catch (error) {
+      throw new AiError(`AI request failed: ${error.message}`, 502);
+    }
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 300);
+      throw new AiError(`AI request failed (${res.status})${detail ? `: ${detail}` : ''}`, 502);
+    }
+    const data = await res.json().catch(() => null);
+    return String(data?.choices?.[0]?.message?.content || '').trim();
+  };
+
+  let content = await ask(messages);
+  // Free providers sometimes return an empty message; ask once more.
+  for (let attempt = 0; !content && attempt < retries; attempt += 1) {
+    content = await ask([...messages, { role: 'user', content: 'Your previous reply was empty. Reply now with the requested output only.' }]);
   }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 300);
-    throw new AiError(`AI request failed (${res.status})${detail ? `: ${detail}` : ''}`, 502);
-  }
-  const data = await res.json().catch(() => null);
-  const content = String(data?.choices?.[0]?.message?.content || '').trim();
   if (!content) throw new AiError('AI returned an empty response', 502);
   return content;
 }
