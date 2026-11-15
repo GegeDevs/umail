@@ -210,7 +210,7 @@ function renderMessages() {
       : '';
     const pending = message.pendingAction
       ? `<div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-          <div class="text-[11px] text-gray-500 dark:text-gray-400 mb-1">${escapeHtml(`Allow UMail to ${message.pendingAction.action} this thread?`)}</div>
+          <div class="text-[11px] text-gray-500 dark:text-gray-400 mb-1">${escapeHtml(`Allow UMail to ${message.pendingAction.action} ${message.pendingAction.threads?.length || 1} thread${(message.pendingAction.threads?.length || 1) === 1 ? '' : 's'}?`)}</div>
           <div class="flex flex-wrap gap-1.5">
             <button data-ai-deny="${message.clientId}" class="btn-secondary !py-1 !px-2 !text-xs">Deny</button>
             <button data-ai-confirm="${message.clientId}" class="btn-primary !py-1 !px-2 !text-xs">Allow</button>

@@ -27,6 +27,8 @@ Return exactly one JSON object, no code fences and no extra text:
 
 manage_thread actions: archive, inbox, trash, untrash, spam, not_spam, read, unread, star, unstar, important, unimportant, apply_label, remove_label, snooze. For labels pass "label":"Label name". For snooze pass "until":"ISO date-time" computed from today's date in the user's timezone.
 
+For the same action on several threads, call manage_thread once with "threads":[{"accountId":1,"threadId":"abc"},{"accountId":2,"threadId":"def"}]. The user then confirms the whole batch with one Deny/Allow/Always allow, so do not claim you will send the rest later.
+
 Risky actions (archive, trash, spam, snooze) may come back as {"pendingAction":...}. That means UMail is asking the user to Deny, Allow, or Always allow. Tell the user you are waiting for their confirmation; never claim the action already happened. Other actions run immediately and return {"executed":true}.
 
 The tools always work. Never claim you cannot access mail or that tools are unavailable. For any question about mail, call search_mail first, even after a greeting. Then read_thread if the answer needs the body. Use accountId 0 to search all accounts. Keep answers concise and in the same language as the user. Mention sender, subject, and dates when relevant. If search returns no rows, say no matching email was found and suggest another keyword.
@@ -91,50 +93,74 @@ async function resolveLabelId(db, accountId, label) {
   return row.gmail_label_id;
 }
 
+function manageTargets(args) {
+  const list = Array.isArray(args.threads)
+    ? args.threads
+    : [{ accountId: args.accountId, threadId: args.threadId }];
+  const targets = list.slice(0, 20).map((target) => ({
+    accountId: Number(target?.accountId),
+    threadId: String(target?.threadId || '')
+  }));
+  if (!targets.length || targets.some((target) => !target.accountId || !target.threadId)) {
+    throw new AiError('accountId and threadId are required', 400);
+  }
+  return targets;
+}
+
 async function runManage(db, env, user, args, approved = false) {
   if (!user) throw new AiError('Authentication required', 401);
-  const accountId = Number(args.accountId);
-  const threadId = String(args.threadId || '');
   const action = String(args.action || '');
-  if (!accountId || !threadId) throw new AiError('accountId and threadId are required', 400);
   if (!MANAGE_ACTIONS.has(action)) throw new AiError(`Unsupported action: ${action}`, 400);
   const permission = permissionForAction(action);
   if (user.role !== 'master' && !user.permissions.includes(permission)) {
     throw new AiError(`Permission denied: ${permission}`, 403);
   }
+  const targets = manageTargets(args);
+  const label = String(args.label || '');
+  const until = String(args.until || '');
   if (RISKY_ACTIONS.has(action) && !approved) {
     const rule = await db.prepare(
       'SELECT allowed FROM ai_action_rules WHERE user_id = ? AND action = ?'
     ).bind(user.id, action).first();
     if (!rule?.allowed) {
-      return { pendingAction: { accountId, threadId, action, label: String(args.label || ''), until: String(args.until || '') } };
+      return { pendingAction: { action, threads: targets, label, until } };
     }
   }
-  const ids = await resolveThreadIds(db, env, accountId, threadId);
-  if (!ids.length) throw new AiError('Thread not found. Search for it first.', 404);
-  if (action === 'snooze') {
-    const until = new Date(args.until).getTime();
-    if (!Number.isFinite(until)) throw new AiError('until must be an ISO date-time', 400);
-    const { results: cached } = await db.prepare(`
-      SELECT gmail_message_id FROM messages
-      WHERE account_id = ? AND gmail_thread_id = ?
-    `).bind(accountId, threadId).all();
-    const cachedIds = new Set(cached.map((row) => row.gmail_message_id));
-    const missing = ids.filter((id) => !cachedIds.has(id));
-    if (missing.length) {
-      const settled = await Promise.allSettled(missing.map((id) => getMessageMetadata(db, env, accountId, id)));
-      const rows = settled.filter((item) => item.status === 'fulfilled')
-        .map((item) => normalizeMessage(accountId, item.value));
-      if (rows.length) await storeMessages(db, accountId, rows);
+  const snoozeAt = action === 'snooze' ? new Date(until).getTime() : 0;
+  if (action === 'snooze' && !Number.isFinite(snoozeAt)) throw new AiError('until must be an ISO date-time', 400);
+  let count = 0;
+  for (const target of targets) {
+    const ids = await resolveThreadIds(db, env, target.accountId, target.threadId);
+    if (!ids.length) throw new AiError('Thread not found. Search for it first.', 404);
+    if (action === 'snooze') {
+      const { results: cached } = await db.prepare(`
+        SELECT gmail_message_id FROM messages
+        WHERE account_id = ? AND gmail_thread_id = ?
+      `).bind(target.accountId, target.threadId).all();
+      const cachedIds = new Set(cached.map((row) => row.gmail_message_id));
+      const missing = ids.filter((id) => !cachedIds.has(id));
+      if (missing.length) {
+        const settled = await Promise.allSettled(missing.map((id) => getMessageMetadata(db, env, target.accountId, id)));
+        const rows = settled.filter((item) => item.status === 'fulfilled')
+          .map((item) => normalizeMessage(target.accountId, item.value));
+        if (rows.length) await storeMessages(db, target.accountId, rows);
+      }
+      await snoozeMessages(db, env, target.accountId, ids, snoozeAt);
+    } else {
+      const labelId = ['apply_label', 'remove_label'].includes(action)
+        ? await resolveLabelId(db, target.accountId, label)
+        : '';
+      await applyAction(db, env, target.accountId, ids, action, labelId);
     }
-    await snoozeMessages(db, env, accountId, ids, until);
-    return { executed: true, action, accountId, threadId, count: ids.length, until: new Date(until).toISOString() };
+    count += ids.length;
   }
-  const labelId = ['apply_label', 'remove_label'].includes(action)
-    ? await resolveLabelId(db, accountId, args.label)
-    : '';
-  await applyAction(db, env, accountId, ids, action, labelId);
-  return { executed: true, action, accountId, threadId, count: ids.length };
+  return {
+    executed: true,
+    action,
+    threads: targets,
+    count,
+    ...(action === 'snooze' ? { until: new Date(snoozeAt).toISOString() } : {})
+  };
 }
 
 export async function confirmAiAction(db, env, user, input, remember = false) {

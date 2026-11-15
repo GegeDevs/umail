@@ -892,17 +892,25 @@ test('AI chat asks for confirmation before risky actions and remembers always al
       const last = request.messages.at(-1).content;
       if (last.startsWith('TOOL RESULT')) toolResults.push(last);
       const content = aiCalls === 1
-        ? '{"tool":"manage_thread","args":{"accountId":1,"threadId":"t1","action":"archive"}}'
+        ? '{"tool":"manage_thread","args":{"threads":[{"accountId":1,"threadId":"t1"},{"accountId":1,"threadId":"t2"}],"action":"archive"}}'
         : '{"answer":"Menunggu konfirmasi."}';
       return Response.json({ choices: [{ message: { content } }] });
     }
     if (url.hostname === 'gmail.googleapis.com') {
-      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'm1' }] });
+      if (url.pathname.endsWith('/messages')) {
+        const threadId = url.searchParams.get('threadId');
+        return Response.json({ messages: [{ id: threadId === 't2' ? 'm2' : 'm1' }] });
+      }
       if (url.pathname.endsWith('/messages/batchModify')) return new Response(null, { status: 204 });
     }
     return Response.json({ error: { message: 'not found' } }, { status: 404 });
   };
   try {
+    await db.prepare(`
+      INSERT INTO messages
+        (account_id, gmail_message_id, gmail_thread_id, internal_date, subject, snippet, label_ids, is_unread, is_starred)
+      VALUES (1, 'm2', 't2', 3000, 'Second', 'snippet', '[\"INBOX\"]', 1, 0)
+    `).run();
     const chat = await app.request('/api/mail/ai/chat', {
       method: 'POST',
       headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
@@ -910,7 +918,12 @@ test('AI chat asks for confirmation before risky actions and remembers always al
     });
     expect(chat.status).toBe(200);
     const chatData = await chat.json();
-    expect(chatData.pendingAction).toEqual({ accountId: 1, threadId: 't1', action: 'archive', label: '', until: '' });
+    expect(chatData.pendingAction).toEqual({
+      action: 'archive',
+      threads: [{ accountId: 1, threadId: 't1' }, { accountId: 1, threadId: 't2' }],
+      label: '',
+      until: ''
+    });
     expect((await db.prepare("SELECT label_ids FROM messages WHERE gmail_message_id = 'm1'").first()).label_ids).toContain('INBOX');
     expect(toolResults[0]).toContain('"pendingAction"');
 
@@ -922,6 +935,7 @@ test('AI chat asks for confirmation before risky actions and remembers always al
     expect(confirmed.status).toBe(200);
     expect((await confirmed.json()).executed).toBe(true);
     expect((await db.prepare("SELECT label_ids FROM messages WHERE gmail_message_id = 'm1'").first()).label_ids).not.toContain('INBOX');
+    expect((await db.prepare("SELECT label_ids FROM messages WHERE gmail_message_id = 'm2'").first()).label_ids).not.toContain('INBOX');
     const rules = await (await app.request('/api/mail/ai/action-rules', { headers: headers() })).json();
     expect(rules.results).toContain('archive');
 
