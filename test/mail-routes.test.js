@@ -483,6 +483,47 @@ test('AI chat retries a false "tools unavailable" answer and searches multi-word
   }
 });
 
+test('AI chat can list the newest mail with an empty search query', async () => {
+  const { db, app } = await setup();
+  await db.prepare(`
+    INSERT INTO messages
+      (account_id, gmail_message_id, gmail_thread_id, internal_date, from_name, from_email,
+       to_json, subject, snippet, label_ids, is_unread, is_starred, raw_headers_json)
+    VALUES (1, 'm2', 't2', 3000, 'Newest', 'newest@example.com', '[]',
+            'Fresh mail', 'today', '["INBOX"]', 1, 0, '{}')
+  `).run();
+  await db.prepare(`
+    INSERT INTO settings (key, value) VALUES
+      ('ai_base_url', 'https://ai.test/v1'),
+      ('ai_api_key', 'test-key'),
+      ('ai_model', 'test-model')
+  `).run();
+  const originalFetch = globalThis.fetch;
+  const aiRequests = [];
+  globalThis.fetch = async (input, options = {}) => {
+    if (new URL(String(input)).hostname === 'ai.test') {
+      aiRequests.push(JSON.parse(options.body));
+      const content = aiRequests.length === 1
+        ? '{"tool":"search_mail","args":{"query":"","accountId":0}}'
+        : '{"answer":"Email terbaru: Fresh mail."}';
+      return Response.json({ choices: [{ message: { content } }] });
+    }
+    return Response.json({ error: { message: 'not found' } }, { status: 404 });
+  };
+  try {
+    const res = await app.request('/api/mail/ai/chat', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Ada email hari ini?' }] })
+    });
+    expect(res.status).toBe(200);
+    const toolResult = aiRequests[1].messages.at(-1).content;
+    expect(toolResult).toContain('"queryTerms":[]');
+    expect(toolResult.indexOf('"threadId":"t2"')).toBeLessThan(toolResult.indexOf('"threadId":"t1"'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test('AI chat returns an error when the provider keeps refusing to use tools', async () => {
   const { db, app } = await setup();
   await db.prepare(`
@@ -560,6 +601,40 @@ test('AI chat carries earlier source ids into follow-up requests', async () => {
     expect(messages[2].content).toContain('1. accountId=1 threadId=t1 subject="Hello"');
     expect(messages.at(-1).content).toContain('TOOL RESULT read_thread');
     expect(messages.at(-1).content).toContain('Hi there');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+test('AI chat tells the model today\'s date in the configured timezone', async () => {
+  const { db, app } = await setup();
+  await db.prepare(`
+    INSERT OR REPLACE INTO settings (key, value) VALUES
+      ('ai_base_url', 'https://ai.test/v1'),
+      ('ai_api_key', 'test-key'),
+      ('ai_model', 'test-model'),
+      ('timezone', 'Asia/Jakarta')
+  `).run();
+  const originalFetch = globalThis.fetch;
+  let system = '';
+  globalThis.fetch = async (input, options = {}) => {
+    if (new URL(String(input)).hostname === 'ai.test') {
+      system = JSON.parse(options.body).messages[0].content;
+      return Response.json({ choices: [{ message: { content: '{"answer":"ok"}' } }] });
+    }
+    return Response.json({ error: { message: 'not found' } }, { status: 404 });
+  };
+  try {
+    const res = await app.request('/api/mail/ai/chat', {
+      method: 'POST',
+      headers: headers({ 'x-csrf-token': 'csrf', 'content-type': 'application/json' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Ada email hari ini?' }] })
+    });
+    expect(res.status).toBe(200);
+    const expected = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+    expect(system).toContain(`Today is`);
+    expect(system).toContain(`${expected} (Asia/Jakarta)`);
   } finally {
     globalThis.fetch = originalFetch;
   }
